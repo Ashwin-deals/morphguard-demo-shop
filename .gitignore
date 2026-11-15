@@ -1,0 +1,15 @@
+# Local virtual environment (re-create with: pip install -r requirements.txt)
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime output and local state
+demo_shop.log*
+demo_shop.phases
+.traffic_used_ids
+
+# Secrets / local settings
+.env
+.env.*
+
+.DS_Store
