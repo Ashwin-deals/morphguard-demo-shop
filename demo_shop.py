@@ -234,11 +234,13 @@ def json_filled(base: dict, key: str, make_item, size: int, exact: bool = False)
     return JsonResponse(base)
 
 
-def text_filled(head: str, chunk, tail: str, size: int, content_type: str) -> HttpResponse:
+def text_filled(head: str, chunk, tail: str, size: int, content_type: str, min_chunks: int = 0) -> HttpResponse:
     goal, parts, i = target(size), [head], 0
     length = len(head) + len(tail)
-    while length < goal:
+    while length < goal or i < min_chunks:
         piece = chunk(i)
+        if i >= min_chunks and length + len(piece) > goal:
+            break
         parts.append(piece)
         length += len(piece)
         i += 1
@@ -249,13 +251,72 @@ def text_filled(head: str, chunk, tail: str, size: int, content_type: str) -> Ht
 # -- views ---------------------------------------------------------------------
 
 
+HOME_CSS = (
+    ":root{--bg:#f5f3ee;--ink:#1c2433;--mut:#6b7280;--line:#e6e1d6;--teal:#0f766e;--amber:#f59e0b}"
+    "*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--ink)}"
+    "header{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:18px;padding:14px 28px;background:var(--ink);color:#fff}"
+    ".logo{font-weight:800;font-size:20px}.logo b{color:var(--amber)}"
+    ".who{margin-left:auto;font-size:13px;opacity:.9}.who input{width:78px;margin-left:6px;padding:4px 7px;border:0;border-radius:6px}"
+    "header button{border:0;border-radius:99px;padding:8px 15px;font:600 14px system-ui;cursor:pointer;background:var(--amber);color:var(--ink)}"
+    ".hero,main,footer{max-width:1180px;margin:0 auto}.hero{padding:34px 28px 6px}.hero h1{margin:0;font-size:32px}.hero p{margin:4px 0 0;color:var(--mut)}"
+    "main{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px;padding:22px 28px 36px}"
+    ".card{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;transition:.15s}"
+    ".card:hover{transform:translateY(-3px);box-shadow:0 8px 22px #1c243318}"
+    ".pic{height:118px;display:grid;place-items:center;font-size:48px;background:linear-gradient(135deg,#fbd3c2,#f0c38e)}"
+    ".card:nth-child(6n+2) .pic{background:linear-gradient(135deg,#f3eeb0,#c6e98f)}.card:nth-child(6n+3) .pic{background:linear-gradient(135deg,#c9f2c4,#86e0a4)}"
+    ".card:nth-child(6n+4) .pic{background:linear-gradient(135deg,#b9f0e3,#8fd9e9)}.card:nth-child(6n+5) .pic{background:linear-gradient(135deg,#c4dcf7,#9aa9ef)}"
+    ".card:nth-child(6n) .pic{background:linear-gradient(135deg,#ddc8f5,#c79be8)}"
+    ".bd{padding:12px 14px 14px;display:flex;flex-direction:column;gap:3px;flex:1}.bd h2{font-size:16px;margin:0}"
+    ".pr{font-weight:800;font-size:19px}.mt{font-size:12px;color:var(--mut)}"
+    ".rw{display:flex;gap:8px;margin-top:auto;padding-top:9px}.rw a,.rw button{flex:1;padding:7px;border-radius:8px;font:13px system-ui;cursor:pointer;text-align:center;text-decoration:none}"
+    ".rw a{border:1px solid var(--line);color:var(--ink)}.rw button{border:0;background:var(--teal);color:#fff}"
+    "#t{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none}"
+    "#t.on{opacity:1}#t.er{background:#b91c1c}footer{padding:0 28px 28px;color:var(--mut);font-size:12px}"
+    "header button{white-space:nowrap}@media(max-width:640px){header{flex-wrap:wrap;gap:10px;padding:12px 16px}.who{margin-left:0}"
+    ".hero,main,footer{padding-left:16px;padding-right:16px}.hero h1{font-size:26px}main{grid-template-columns:1fr}}"
+)
+HOME_JS = (
+    "const $=i=>document.getElementById(i);let n=0;"
+    "try{$('u').value=localStorage.u||(localStorage.u=1000+Math.floor(Math.random()*8000))}catch(e){$('u').value=1000+Math.floor(Math.random()*8000)}"
+    "$('u').onchange=()=>{try{localStorage.u=$('u').value}catch(e){}};"
+    "function toast(m,e){const t=$('t');t.textContent=m;t.className='on'+(e?' er':'');clearTimeout(t.h);t.h=setTimeout(()=>t.className='',2600)}"
+    "async function go(m,p){try{const r=await fetch(p,{method:m,headers:{'X-User':$('u').value}});"
+    "return r.ok?r:(toast('Server error '+r.status+' - the shop is failing for this user',1),null)}catch(e){toast('Shop unreachable',1);return null}}"
+    "async function add(){if(await go('POST','/api/cart')){$('n').textContent=++n;toast('Added to cart')}}"
+    "async function view(i){const r=await go('GET','/api/products/'+i);if(r){const j=await r.json();"
+    "toast(j.name+' - '+j.price+' EUR - '+j.reviews.length+' reviews')}return false}"
+    "async function buy(){if(!n)return toast('Your cart is empty');const r=await go('POST','/api/checkout');"
+    "if(r){const j=await r.json();n=0;$('n').textContent=0;toast('Order '+j.order_id+' confirmed')}}"
+)
+ICONS = {"kettle": "\U0001fad6", "desk": "\U0001fa91", "throw": "\U0001f9e3", "mug": "☕", "shelf": "\U0001f4da",
+         "rug": "\U0001f9f6", "lamp": "\U0001f4a1", "towel": "\U0001f9fa", "vase": "\U0001f3fa", "bag": "\U0001f45c",
+         "tray": "\U0001f37d", "pan": "\U0001f373"}
+
+
+def product_card(i: int) -> str:
+    p = product(i)
+    words = p["name"].lower().split()
+    icon = next((ICONS[w] for w in reversed(words) if w in ICONS), "\U0001f6cd")
+    stock = f'{p["stock"]} in stock' if p["stock"] else "Sold out"
+    return (f'<article class="card"><div class="pic">{icon}</div><div class="bd"><h2>{p["name"]}</h2>'
+            f'<div class="pr">{p["price"]:.2f} EUR</div><div class="mt">&#9733; {p["rating"]} &middot; {stock}</div>'
+            f'<div class="rw"><a href="/api/products/{i}" onclick="return view({i})">View</a>'
+            f'<button onclick="add()">Add to cart</button></div></div></article>')
+
+
 @require_GET
 def home(request):
     work()
-    head = "<!doctype html><html><head><title>Demo Shop</title><script src=\"/static/app.js\"></script></head><body><h1>Demo Shop</h1><main>"
-    card = lambda i: (f'<article class="card"><h2>{product(i)["name"]}</h2><p>{product(i)["price"]} EUR</p>'  # noqa: E731
-                      f'<a href="/api/products/{i}">View</a></article>')
-    return text_filled(head, card, "</main></body></html>", 5200, "text/html")
+    head = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Demo Shop</title><link rel="icon" href="data:,"><script src="/static/app.js" defer></script>'
+            f'<style>{HOME_CSS}</style></head><body><header><div class="logo">Demo<b>Shop</b></div>'
+            '<label class="who">Shopping as user #<input id="u" inputmode="numeric"></label>'
+            '<button onclick="buy()">Cart &middot; <span id="n">0</span> &middot; Checkout</button></header>'
+            '<section class="hero"><h1>Handpicked for your home</h1><p>Lamps, mugs, rugs and more. Every click here is a real '
+            'request that MorphGuard watches live.</p></section><main>')
+    tail = (f'</main><footer>Requests are logged per user and streamed to Kafka for MorphGuard. '
+            f'Users 9000 and above are affected by the chaos switch.</footer><div id="t"></div></body></html>')
+    return text_filled(head, product_card, tail, 5200, "text/html", min_chunks=4)
 
 
 @require_GET
@@ -334,9 +395,9 @@ def login(request):
 @require_GET
 def app_js(request):
     work()
-    return text_filled("/* demo-shop bundle */\n",
+    return text_filled("/* demo-shop bundle */\n" + HOME_JS + "\n",
                        lambda i: f"function m{i}(a,b){{return a&&b?a.concat(b):(a||b||[]).slice({i % 7})}}\n",
-                       "export default {};\n", 88000, "application/javascript")
+                       "window.demoShopBundle = true;\n", 88000, "application/javascript")
 
 
 def not_found(request, exception=None):
